@@ -8,12 +8,3 @@ necsessary:
 	Sound:
 	Add sound for chopper and guns
 	Add some exciting music (one or two tracks.)
-
-	AI:
-	Add stealth AI for pistol guy.
-	rocketguy, rifleguy, and chaingun guy should have a similar AI.
-	The knife guy should just run at you.
-
-optional:
-story (visual novel style)
-voice acting

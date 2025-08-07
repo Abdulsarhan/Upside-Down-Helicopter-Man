@@ -238,11 +238,13 @@ static u32 quadIndices[] = {
 mat4 pv = {0};
 static GLuint VAO = 0, VBO = 0, EBO = 0;
 static GLuint sprite_shader = 0;
-static GLuint player_texture, rocket_guy_texture, chaingun_guy_texture, knife_guy_texture, rifle_guy_texture;
+static GLuint player_texture;
+static GLuint rocket_guy_left_texture, chaingun_guy_left_texture, knife_guy_left_texture, rifle_guy_left_texture;
+static GLuint rocket_guy_right_texture, chaingun_guy_right_texture, knife_guy_right_texture, rifle_guy_right_texture;
 static GLuint cross_pack_texture;
 static GLuint ground_texture, scrolling_clouds_texture, scrolling_trees_texture, scrolling_mountains_texture, sun_texture, sky_texture;
-static GLuint rifle_texture, pistol_texture, rocket_launcher_texture, chaingun_texture, knife_texture;
-static GLuint rifle_flipped_texture, pistol_flipped_texture, rocket_launcher_flipped_texture, chaingun_flipped_texture, knife_flipped_texture;
+static GLuint rifle_right_texture, pistol_right_texture, rocket_launcher_right_texture, chaingun_right_texture, knife_right_texture;
+static GLuint rifle_left_texture, pistol_left_texture, rocket_launcher_left_texture, chaingun_left_texture, knife_left_texture;
 enum {
     NUM_ZERO,
     NUM_ONE,
@@ -319,18 +321,22 @@ static f32 current_time = 0;
 static f32 last_frame_time = 0;
 static f32 delta_time = 0;
 
-// game state
+// Gun sizes.
+const vec2 rifle_size = {9.0f, 3.0f};
+const vec2 rocket_launcher_size = {9.0f, 3.0f};
+const vec2 pistol_size = {9.0f, 3.0f};
+const vec2 chaingun_size = {18.0f, 9.0f};
+const vec2 knife_size = {9.0f, 3.0f};
+
+// entity sizes.
 const vec2 guy_size = {12.0f, 12.0f};
-const vec2 gun_size = {9.0f, 3.0f};
+vec2 chaingun_guy_size = {14.0f, 14.0f};
 const vec2 chopper_size = {54.0f, 54.0f};
-static vec2 player_pos = {00,00};
+
 static int player_health = {100};
-static vec2 player_gun_pos = {0,0};
-static f32 commando_gun_rot = 0;
 
 vec2 rifle_guy_pos = {0, -110};
 vec2 chaingun_guy_pos = {150, -109};
-vec2 chaingun_guy_size = {14.0f, 14.0f};
 vec2 rocket_guy_pos = {100, -110};
 vec2 knife_guy_pos = {200, -110};
 
@@ -365,36 +371,23 @@ typedef enum _entitytype {
 
     // pickups
     ENTITY_TYPE_CROSS_PACK,
-    ENTITY_TYPE,
+    ENTITY_TYPE_COUNT,
 };
-// make it so that we auto render the gun at the correct position and direction 
-// depending on whether the guy is flipped horizontally.
-#if 0 
-if (entity.entity_type == chaingun_guy) {
-    if (entity.flipped_horiz) {
-       draw_enemy(flipped);
-       draw_gun(flipped);
-    }
-    else {
 
-       draw_enemy(normal);
-       draw_gun(normal);
-    }
-    
-}
-#endif
-
-typedef struct entity {
-    u64* UID; // unique identifier of the entity.
+typedef struct Entities {
+    i32 entity_count;
+    u64 next_entity_id;
+    u64* id; // unique identifier of the entity.
     u32* entity_type; // is it a rifle guy? pistol guy? friendly bullet?  enemy bullet?
-    int health; // health of the enemy or player. Does not apply to bullets since they die immediately.
+    i32* health; // health of the enemy or player. Does not apply to bullets since they die immediately.
 	vec2* positions; // position of the guy or the bullet
     f32* rotations; // rotation of the bullet. Should be 0 for the guys.
-    int* owned_by; // is the bullet owned by the player or an enemy?
-    pal_bool* flipped_horiz; // Specifies which way the guy facing. Left or right?
-    f32* gun_rotations; // rotation of the gun that the guy is holding.
-    int* speed; // todo: do we want the speed of each entity to vary? I think this should just be inferred from the entity type.
-};
+    i32* bullet_owned_by; // is the bullet owned by the player or an enemy?
+    pal_bool* facing_left; // Specifies which way the guy facing. Left or right?
+}Entities;
+
+Entities entities;
+#define ENTITY_LIMIT 2000
 
 mat4 view;
 mat4 proj;
@@ -535,29 +528,62 @@ void get_mouse_pos_world() {
     glm_mat4_mulv(inverse_pv,  target_pos_clip_space, mouse_pos_world);
 }
 
-// use this to change the rotation of the player's gun.
-// base_rot_in_rads was meant to be used to account for the player's rotation on the sprite sheet. 
-// if there is no rotation, just pass in 0
-void adjust_gun_rotation(f32 base_rot_in_rads) {
+void adjust_gun_rotations(Entities* entities) {
     vec2 direction = {0, 0};
-    glm_vec2_sub(mouse_pos_world, player_gun_pos, direction);
-    glm_vec2_normalize(direction);
+    f32 rotation = 0;
+    for (int i = 0; i < entities->entity_count; i++) {
+        switch (entities->entity_type[i]) {
+            case ENTITY_TYPE_PLAYER:
+				vec2 player_gun_pos;
+				glm_vec2_add(entities->positions[i], (vec2){15, -36}, player_gun_pos);
+				glm_vec2_sub(mouse_pos_world, player_gun_pos, direction);
+				glm_vec2_normalize(direction);
 
-    f32 rotation = atan2f(direction[1], direction[0]); // y, x
-    commando_gun_rot = rotation - base_rot_in_rads;
+				rotation = atan2f(direction[1], direction[0]); // y, x
+				entities->rotations[i] = rotation - PI; // the player is upside-down.
+                break;
+            case ENTITY_TYPE_CHAINGUN_GUY:
+            case ENTITY_TYPE_PISTOL_GUY:
+            case ENTITY_TYPE_KNIFE_GUY:
+            case ENTITY_TYPE_ROCKET_GUY:
+            case ENTITY_TYPE_RIFLE_GUY:
+				for (int j = 0; j < entities->entity_count; j++) {
+				
+					if (entities->entity_type[j] == ENTITY_TYPE_PLAYER) {
+					
+						glm_vec2_sub(entities->positions[j], entities->positions[i], direction);
+                        if (direction[0] < 0) {
+						rotation = atan2f(direction[1], direction[0]); // y, x
+                            entities->facing_left[i] = pal_true;
+                        } else {
+						rotation = atan2f(direction[1], direction[0]); // y, x
+                            entities->facing_left[i] = pal_false;
+                        }
+                        if (entities->facing_left[i] == pal_true) {
+							entities->rotations[i] = rotation - PI; // the player is upside-down.
+                        } else {
+							entities->rotations[i] = rotation; // the player is upside-down.
+                        }
+					}
+				}
+                break;
+                // should we make this function adjust bullet rotations as well?
+            case ENTITY_TYPE_CHAINGUN_BULLET:
+                break;
+            case ENTITY_TYPE_PISTOL_BULLET:
+                break;
+            case ENTITY_TYPE_KNIFE_BULLET:
+                break;
+            case ENTITY_TYPE_RIFLE_BULLET:
+                break;
+            case ENTITY_TYPE_ROCKET_BULLET:
+                break;
+
+        }
+    }
 }
+
 #if 0
-// use this to change the rotation of the gun of every enemy. Make the guns face the player
-// or the chopper, i really don't know rn.
-void make_guns_face_player(f32 base_rot_in_rads) {
-        vec2 direction = {0};
-        // add a for loop here so that you can do this for all the chaingun guys.
-        glm_vec2_sub(player_pos, chaingun_guy_pos, direction);
-        glm_normalize(direction);
-        f32 rotation = atan2f(direction[0], direction[1]);
-        f32 chaingun_guys_gun_rot = rotation - base_rot_in_rads;
-
-}
 
 // 
 void adjust_bullet_rotation(f32 base_rot_in_rads, i32 bulletIdx) {
@@ -625,6 +651,30 @@ i32 myitoa(i32 value, char* string)
 
     return len;
 }
+static void create_entity(vec2 position, u32 entity_type, pal_bool facing_left, pal_bool bullet_owner) {
+    int entity = entities.entity_count;
+    entities.entity_count++;
+    entities.id[entity] = entities.next_entity_id;
+    entities.next_entity_id++;
+
+    entities.entity_type[entity] = entity_type;
+    assert(entities.entity_type[entity] >= 0 && entities.entity_type[entity] < ENTITY_TYPE_COUNT);
+
+    glm_vec2_add((vec2){position[0], position[1]}, (vec2){0, 0}, entities.positions[entity]);
+    entities.rotations[entity] = 0;
+    entities.facing_left[entity] = facing_left;
+    if (entity_type == ENTITY_TYPE_CHAINGUN_GUY) {
+    
+		entities.health[entity] = 200;
+    } else if (entity_type == ENTITY_TYPE_ROCKET_GUY) {
+        entities.health[entity] = 150;
+    } else if (entity_type == ENTITY_TYPE_RIFLE_GUY) {
+        entities.health[entity] = 100;
+    } else if (entity_type == ENTITY_TYPE_PISTOL_GUY) {
+        entities.health[entity] = 100;
+    }
+    entities.bullet_owned_by[entity] = bullet_owner;
+}
 
 static void game_update_and_render(pal_window* window) {
     // Initialize OpenGL objects on first run
@@ -633,24 +683,30 @@ static void game_update_and_render(pal_window* window) {
         sprite_shader = load_shader("shaders/sprite.vert", "shaders/sprite.frag");
         // Player
         player_texture = load_texture("textures/upside_down_heli_man.png");
-        // Enemies
-        rocket_guy_texture = load_texture("textures/rocket_guy.png");
-        chaingun_guy_texture = load_texture("textures/chaingun_guy.png");
-        rifle_guy_texture = load_texture("textures/rifle_guy.png");
-        knife_guy_texture = load_texture("textures/knife_guy.png");
+        // Enemies facing left
+        rocket_guy_left_texture = load_texture("textures/rocket_guy_left.png");
+        chaingun_guy_left_texture = load_texture("textures/chaingun_guy_left.png");
+        rifle_guy_left_texture = load_texture("textures/rifle_guy_left.png");
+        knife_guy_left_texture = load_texture("textures/knife_guy_left.png");
         cross_pack_texture = load_texture("textures/cross_pack.png");
-        // Weapons normal
-        rifle_texture = load_texture("textures/rifle.png");
-		pistol_texture = load_texture("textures/pistol.png");
-        rocket_launcher_texture = load_texture("textures/rocket_launcher.png");
-        chaingun_texture = load_texture("textures/chaingun.png");
-        knife_texture = load_texture("textures/knife.png");
-        // Weapons flipped
-        rifle_flipped_texture = load_texture("textures/rifle_flipped.png");
-		pistol_flipped_texture = load_texture("textures/pistol_flipped.png");
-        rocket_launcher_flipped_texture = load_texture("textures/rocket_launcher_flipped.png");
-        chaingun_flipped_texture = load_texture("textures/chaingun_flipped.png");
-        knife_flipped_texture = load_texture("textures/knife_flipped.png");
+
+        // Enemies facing right
+        rocket_guy_right_texture = load_texture("textures/rocket_guy_right.png");
+        chaingun_guy_right_texture = load_texture("textures/chaingun_guy_right.png");
+        rifle_guy_right_texture = load_texture("textures/rifle_guy_right.png");
+        knife_guy_right_texture = load_texture("textures/knife_guy_right.png");
+        // Weapons facing right
+        rifle_right_texture = load_texture("textures/rifle_right.png");
+		pistol_right_texture = load_texture("textures/pistol_right.png");
+        rocket_launcher_right_texture = load_texture("textures/rocket_launcher_right.png");
+        chaingun_right_texture = load_texture("textures/chaingun_right.png");
+        knife_right_texture = load_texture("textures/knife_right.png");
+        // Weapons facing left
+        rifle_left_texture = load_texture("textures/rifle_left.png");
+		pistol_left_texture = load_texture("textures/pistol_left.png");
+        rocket_launcher_left_texture = load_texture("textures/rocket_launcher_left.png");
+        chaingun_left_texture = load_texture("textures/chaingun_left.png");
+        knife_left_texture = load_texture("textures/knife_left.png");
         // level
         ground_texture = load_texture("textures/ground.png");
         scrolling_clouds_texture = load_texture("textures/scrolling_clouds.png");
@@ -694,7 +750,18 @@ static void game_update_and_render(pal_window* window) {
         // this will be wrong when debugging, but when we fullscreen
         // the game, it will be fine.
         glViewport(0, 0, (int)SCREEN_WIDTH, (int)SCREEN_HEIGHT);
-
+        entities.id = malloc(sizeof(u64) * ENTITY_LIMIT);
+        entities.entity_type = malloc(sizeof(u32) * ENTITY_LIMIT);
+        entities.facing_left = malloc(sizeof(pal_bool) * ENTITY_LIMIT);
+        entities.rotations = malloc(sizeof(f32) * ENTITY_LIMIT);
+        entities.health = malloc(sizeof(i32) * ENTITY_LIMIT);
+        entities.bullet_owned_by = malloc(sizeof(i32) * ENTITY_LIMIT);
+        entities.positions = malloc(sizeof(float) * 2 * ENTITY_LIMIT);
+		create_entity((vec2){0,0}, ENTITY_TYPE_PLAYER, 0, 0);
+		create_entity((vec2){50,0}, ENTITY_TYPE_CHAINGUN_GUY, 0, 0);
+		create_entity((vec2){100,0}, ENTITY_TYPE_PISTOL_GUY, 0, 0);
+		create_entity((vec2){150,0}, ENTITY_TYPE_KNIFE_GUY, 0, 0);
+		create_entity((vec2){200,0}, ENTITY_TYPE_RIFLE_GUY, 0, 0);
     }
     //--------------------------------------------------
     // Renderer Stuff that Gamplay Code Relies on
@@ -703,7 +770,7 @@ static void game_update_and_render(pal_window* window) {
 
     // View matrix
     glm_mat4_identity(view);
-    f32 camera_x = player_pos[0] + 200;
+    f32 camera_x = entities.positions[0][0] + 200;
     f32 camera_y = 0;
     vec3 camera_translation = {-camera_x, -camera_y, 0.0f};
     glm_translate(view, camera_translation);
@@ -722,6 +789,7 @@ static void game_update_and_render(pal_window* window) {
     const f32 player_speed = 400.0f;
     const f32 half_of_sqrt_of_two = 0.707107f;
     vec2 move_delta = {0};
+    pal_bool get_back = 0;
     move_delta[1] += player_speed * is_key_down(PAL_W);
     move_delta[1] -= player_speed * is_key_down(PAL_S);
     move_delta[0] -= player_speed * is_key_down(PAL_A);
@@ -731,15 +799,18 @@ static void game_update_and_render(pal_window* window) {
         move_delta[0] *= half_of_sqrt_of_two;
         move_delta[1] *= half_of_sqrt_of_two;
     }
-    player_pos[0] += move_delta[0] * delta_time;
-    player_pos[1] += move_delta[1] * delta_time;
-    glm_vec2_add(player_pos, (vec2){15,-36}, player_gun_pos);
+    if ((entities.positions[0][0] + move_delta[0]) <= -750) {
+        get_back = 1;
+    } else {
+		entities.positions[0][0] += move_delta[0] * delta_time;
+		entities.positions[0][1] += move_delta[1] * delta_time;
+    }
     //--------------------------------------------------
     // Player weapons & shooting
     //--------------------------------------------------
 
     get_mouse_pos_world();
-    adjust_gun_rotation(3.1415);
+    adjust_gun_rotations(&entities);
     enum {
         WEAPON_KNIFE,
         WEAPON_RIFLE,
@@ -767,9 +838,9 @@ static void game_update_and_render(pal_window* window) {
     // fix this by making the ground longer.
 
     // level shit
-    vec2 cloud_pos_1 = {- player_pos[0]  * cloud_scrl_fact , 0};
-    vec2 mountain_pos_1 = {- player_pos[0] * mountain_scrl_fact, 0};
-    vec2 tree_pos_1 = {-player_pos[0] * tree_scrl_fact , 0};
+    vec2 cloud_pos_1 = {- entities.positions[0][0]  * cloud_scrl_fact , 0};
+    vec2 mountain_pos_1 = {- entities.positions[0][0] * mountain_scrl_fact, 0};
+    vec2 tree_pos_1 = {-entities.positions[0][0] * tree_scrl_fact , 0};
     // draw sky and sun first.
     draw_sprite(sky_texture, (vec2){0,0}, (vec2){640, 180}, no_rotation);
     draw_sprite(sun_texture, (vec2){-320 / 6, 20}, (vec2){320 / 6.5,320/ 6.5}, no_rotation);
@@ -811,6 +882,89 @@ static void game_update_and_render(pal_window* window) {
     draw_sprite(scrolling_trees_texture, tree_pos_4, (vec2){640,180}, no_rotation);
     // draw ground last
     draw_sprite(ground_texture, (vec2){0,0}, (vec2){640, 180}, no_rotation);
+
+    //player
+    for (int i = 0; i < entities.entity_count; i++) {
+        vec2 gun_pos = {0, 0};
+        switch (entities.entity_type[i]) {
+
+            case ENTITY_TYPE_PLAYER:
+            glm_vec2_add(entities.positions[i], (vec2){15, -36}, gun_pos);
+
+            draw_sprite(player_texture, entities.positions[i], chopper_size, no_rotation);
+            draw_sprite(rifle_left_texture, gun_pos, rifle_size, entities.rotations[i]);
+            break;
+
+            case ENTITY_TYPE_KNIFE_GUY:
+            glm_vec2_add(entities.positions[i], (vec2){15, -36}, gun_pos);
+
+			if (entities.facing_left[i]) {
+            draw_sprite(rifle_guy_left_texture, entities.positions[i], guy_size, no_rotation);
+            draw_sprite(knife_left_texture, gun_pos, knife_size, entities.rotations[i]);
+            } else {
+            draw_sprite(rifle_guy_right_texture, entities.positions[i], guy_size, no_rotation);
+            draw_sprite(knife_right_texture, gun_pos, knife_size, entities.rotations[i]);
+            
+            }
+                break;
+
+            case ENTITY_TYPE_PISTOL_GUY:
+            glm_vec2_add(entities.positions[i], (vec2){15, -36}, gun_pos);
+
+			if (entities.facing_left[i]) {
+				draw_sprite(rifle_guy_left_texture, entities.positions[i], guy_size, no_rotation);
+				draw_sprite(pistol_left_texture, gun_pos, pistol_size, entities.rotations[i]);
+            } else {
+				draw_sprite(rifle_guy_right_texture, entities.positions[i], guy_size, no_rotation);
+				draw_sprite(pistol_right_texture, gun_pos, pistol_size, entities.rotations[i]);
+            
+            }
+                break;
+            case ENTITY_TYPE_RIFLE_GUY:
+            glm_vec2_add(entities.positions[i], (vec2){15, -36}, gun_pos);
+			if (entities.facing_left[i]) {
+				draw_sprite(rifle_guy_left_texture, entities.positions[i], guy_size, no_rotation);
+				draw_sprite(rifle_left_texture, gun_pos, rifle_size, entities.rotations[i]);
+            } else {
+				draw_sprite(rifle_guy_right_texture, entities.positions[i], guy_size, no_rotation);
+				draw_sprite(rifle_right_texture, gun_pos, rifle_size, entities.rotations[i]);
+            
+			}
+                break;
+            case ENTITY_TYPE_ROCKET_GUY:
+            glm_vec2_add(entities.positions[i], (vec2){15, -36}, gun_pos);
+
+            if (entities.facing_left[i]) {
+            draw_sprite(rocket_guy_left_texture, entities.positions[i], guy_size, no_rotation);
+            draw_sprite(rocket_launcher_left_texture, gun_pos, rocket_launcher_size, entities.rotations[i]);
+            } else {
+            draw_sprite(rocket_guy_right_texture, entities.positions[i], guy_size, no_rotation);
+            draw_sprite(rocket_launcher_right_texture, gun_pos, rocket_launcher_size, entities.rotations[i]);
+            
+            }
+                break;
+
+            case ENTITY_TYPE_CHAINGUN_GUY:
+            glm_vec2_add(entities.positions[i], (vec2){5, -3}, gun_pos);
+
+            if (entities.facing_left[i]) {
+				draw_sprite(chaingun_guy_left_texture, entities.positions[i], chaingun_guy_size, no_rotation);
+				draw_sprite(chaingun_left_texture, gun_pos, chaingun_size, entities.rotations[i]);
+            } else {
+				draw_sprite(chaingun_guy_right_texture, entities.positions[i], chaingun_guy_size, no_rotation);
+				draw_sprite(chaingun_right_texture, gun_pos, chaingun_size, entities.rotations[i]);
+
+            }
+                break;
+        }
+    }
+
+    // draw pickups
+    vec2 cross_pack_size = {10,10};
+    vec2 cross_pack_pos = {150, -100};
+    draw_sprite(cross_pack_texture, cross_pack_pos, cross_pack_size, no_rotation);
+
+    // text
     rgb_color player_health_color = lerp_red_green_100(player_health);
     const char player_health_string[24] = "HP:";
     const char player_health_number_string[24];
@@ -818,21 +972,10 @@ static void game_update_and_render(pal_window* window) {
     myitoa(player_health, player_health_number_string);
     strcat(player_health_string, player_health_number_string);
     draw_text(player_health_string, -300, 140, 16, 6, (vec3){player_health_color.r, player_health_color.g, 0});
-
-    //player
-    draw_sprite(player_texture, player_pos, chopper_size, no_rotation);
-    draw_sprite(rifle_flipped_texture, player_gun_pos, gun_size, commando_gun_rot);
-
-    // enemies
-    draw_sprite(rifle_guy_texture, rifle_guy_pos, guy_size, no_rotation);
-    draw_sprite(chaingun_guy_texture, chaingun_guy_pos, chaingun_guy_size, no_rotation);
-    draw_sprite(rocket_guy_texture, rocket_guy_pos, guy_size, no_rotation);
-    draw_sprite(knife_guy_texture, knife_guy_pos, guy_size, no_rotation);
-    // draw pickups
-    vec2 cross_pack_size = {10,10};
-    vec2 cross_pack_pos = {150, -100};
-    draw_sprite(cross_pack_texture, cross_pack_pos, cross_pack_size, no_rotation);
-
+    if (get_back) {
+    
+    draw_text("GET BACK TO THE FRONT LINES", -300, 0, 16, 6, (vec3){1, 1, 1});
+    }
     // Swap buffers
     pal_swap_buffers(window);
 }
@@ -858,7 +1001,7 @@ int main() {
     pal_gamepad_state state;
     uint8_t running = pal_true;
     pal_event event;
-    pal_swap_interval(0);
+    pal_swap_interval(1);
     while (running) {
         current_time = pal_get_time_since_pal_started();
         delta_time = current_time - last_frame_time;

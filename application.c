@@ -245,73 +245,6 @@ static GLuint ground_texture, scrolling_clouds_texture, scrolling_trees_texture,
 static GLuint rifle_bullet_texture, pistol_bullet_texture, knife_bullet_texture, chaingun_bullet_texture, rocket_bullet_texture;
 static GLuint rifle_right_texture, pistol_right_texture, rocket_launcher_right_texture, chaingun_right_texture, knife_right_texture;
 static GLuint rifle_left_texture, pistol_left_texture, rocket_launcher_left_texture, chaingun_left_texture, knife_left_texture;
-enum {
-    NUM_ZERO,
-    NUM_ONE,
-    NUM_TWO,
-    NUM_THREE,
-    NUM_FOUR,
-    NUM_FIVE,
-    NUM_SIX,
-    NUM_SEVEN,
-    NUM_EIGHT,
-    NUM_NINE,
-    LOWER_A,
-    LOWER_B,
-    LOWER_C,
-    LOWER_D,
-    LOWER_E,
-    LOWER_F,
-    LOWER_G,
-    LOWER_H,
-    LOWER_I,
-    LOWER_J,
-    LOWER_K,
-    LOWER_L,
-    LOWER_M,
-    LOWER_N,
-    LOWER_O,
-    LOWER_P,
-    LOWER_Q,
-    LOWER_R,
-    LOWER_S,
-    LOWER_T,
-    LOWER_U,
-    LOWER_V,
-    LOWER_W,
-    LOWER_X,
-    LOWER_Y,
-    LOWER_Z,
-    UPPER_A,
-    UPPER_B,
-    UPPER_C,
-    UPPER_D,
-    UPPER_E,
-    UPPER_F,
-    UPPER_G,
-    UPPER_H,
-    UPPER_I,
-    UPPER_J,
-    UPPER_K,
-    UPPER_L,
-    UPPER_M,
-    UPPER_N,
-    UPPER_O,
-    UPPER_P,
-    UPPER_Q,
-    UPPER_R,
-    UPPER_S,
-    UPPER_T,
-    UPPER_U,
-    UPPER_V,
-    UPPER_W,
-    UPPER_X,
-    UPPER_Y,
-    UPPER_Z,
-
-    CHARACTER_COUNT
-
-};
 
 #define ASCII_MAX 128
 static GLuint bitmap_font[ASCII_MAX]; // indices 0 - 9 corresponds to numbers 0 - 9 everything after that is lowercase letters.
@@ -335,12 +268,16 @@ f32 rocket_firetime = 0;
 f32 chaingun_firetime = 0;
 f32 chaingun_revtime = 0;
 
-//fire times for enemies
+// fire times for enemies
 f32 knife_guys_timer = 0;
 f32 pistol_guys_timer = 0;
 f32 rifle_guys_timer = 0;
 f32 rocket_guys_timer = 0;
 f32 chaingun_guys_timer = 0;
+f32 spawn_timer = 0;
+
+// score tracking.
+i32 score;
 // Gun sizes.
 static const vec2 rifle_size = {9.0f, 3.0f};
 static const vec2 rocket_launcher_size = {12.0f, 3.0f};
@@ -389,7 +326,6 @@ static vec4 mouse_pos_world = {0,0,0,0};
 enum _entitytype {
 
     // player
-    ENTITY_TYPE_PLAYER,
 
     // enemies
     ENTITY_TYPE_KNIFE_GUY,
@@ -397,6 +333,8 @@ enum _entitytype {
     ENTITY_TYPE_RIFLE_GUY,
     ENTITY_TYPE_ROCKET_GUY,
     ENTITY_TYPE_CHAINGUN_GUY,
+
+    ENTITY_TYPE_PLAYER,
 
     // bullet types
     ENTITY_TYPE_KNIFE_BULLET, // what the fuck?
@@ -601,33 +539,10 @@ void adjust_gun_rotations(Entities* entities) {
 					}
 				}
                 break;
-                // should we make this function adjust bullet rotations as well?
-            case ENTITY_TYPE_CHAINGUN_BULLET:
-                break;
-            case ENTITY_TYPE_PISTOL_BULLET:
-                break;
-            case ENTITY_TYPE_KNIFE_BULLET:
-                break;
-            case ENTITY_TYPE_RIFLE_BULLET:
-                break;
-            case ENTITY_TYPE_ROCKET_BULLET:
-                break;
 
         }
     }
 }
-
-#if 0
-
-// 
-void adjust_bullet_rotation(f32 base_rot_in_rads, i32 bulletIdx) {
-		vec2 direction = {0};
-        glm_vec2_sub((vec2){mouse_pos_world[0], mouse_pos_world[1]}, player_pos, direction);
-        glm_normalize(direction);
-        f32 rotation = atan2f(direction[0], direction[1]);
-        Bullets.rotations[bulletIdx] = rotation - base_rot_in_rads;
-}
-#endif
 
 typedef struct rgb_color {
     float r;
@@ -706,6 +621,8 @@ int create_entity(vec2 position, u32 entity_type, pal_bool facing_left, pal_bool
     } else if (entity_type == ENTITY_TYPE_RIFLE_GUY) {
         entities.health[entity] = 100;
     } else if (entity_type == ENTITY_TYPE_PISTOL_GUY) {
+        entities.health[entity] = 50;
+    } else if (entity_type == ENTITY_TYPE_KNIFE_GUY) {
         entities.health[entity] = 100;
     }
     entities.bullet_owned_by[entity] = bullet_owner;
@@ -713,18 +630,23 @@ int create_entity(vec2 position, u32 entity_type, pal_bool facing_left, pal_bool
 }
 
 static void destroy_entity(int entity_idx) {
-    i32 last_entity = entities.entity_count;
-    entities.id[entity_idx] = entities.id[last_entity];
-    entities.entity_type[entity_idx] = entities.entity_type[last_entity];
-    entities.health[entity_idx] = entities.health[last_entity];
-    entities.positions[entity_idx][0] = entities.positions[last_entity][0];
-    entities.positions[entity_idx][1] = entities.positions[last_entity][1];
-    entities.rotations[entity_idx] = entities.rotations[last_entity];
-    entities.bullet_owned_by[entity_idx] = entities.bullet_owned_by[last_entity];
-    entities.facing_left[entity_idx] = entities.facing_left[last_entity];
+    i32 last_entity = entities.entity_count - 1;
+
+    if (entity_idx != last_entity) {
+        entities.id[entity_idx] = entities.id[last_entity];
+        entities.entity_type[entity_idx] = entities.entity_type[last_entity];
+        entities.health[entity_idx] = entities.health[last_entity];
+        entities.positions[entity_idx][0] = entities.positions[last_entity][0];
+        entities.positions[entity_idx][1] = entities.positions[last_entity][1];
+        entities.rotations[entity_idx] = entities.rotations[last_entity];
+        entities.bullet_owned_by[entity_idx] = entities.bullet_owned_by[last_entity];
+        entities.facing_left[entity_idx] = entities.facing_left[last_entity];
+		entities.velocities[entity_idx][0] = entities.velocities[last_entity][0];
+		entities.velocities[entity_idx][1] = entities.velocities[last_entity][1];
+    }
+
     entities.entity_count--;
 }
-
 static void destroy_all_entities() {
     i32 entity_count = entities.entity_count;
     entities.entity_count = 0;
@@ -841,12 +763,20 @@ static void game_update_and_render(pal_window* window) {
         entities.positions = malloc(sizeof(vec2) * ENTITY_LIMIT);
         entities.velocities = malloc(sizeof(vec2) * ENTITY_LIMIT);
 		create_entity((vec2){0,-110}, ENTITY_TYPE_PLAYER, 0, 0);
-		create_entity((vec2){50,-110}, ENTITY_TYPE_CHAINGUN_GUY, 0, 0);
-		create_entity((vec2){100,-110}, ENTITY_TYPE_PISTOL_GUY, 0, 0);
-		create_entity((vec2){150,-110}, ENTITY_TYPE_KNIFE_GUY, 0, 0);
-		create_entity((vec2){200,-110}, ENTITY_TYPE_RIFLE_GUY, 0, 0);
-		create_entity((vec2){250,-110}, ENTITY_TYPE_ROCKET_GUY, 0, 0);
     }
+    //--------------------------------------------------
+    // Randomly Spawning Entities
+    //--------------------------------------------------
+		uint64_t state = 0;
+		pal_srand(&state, current_time);
+		uint32_t location = pal_rand(&state) % 100;
+		pal_srand(&state, current_time);
+		uint32_t enemy_type = pal_rand(&state) % 4;
+        if (spawn_timer < (current_time - 0.5) || spawn_timer == 0) {
+            create_entity((vec2){entities.positions[0][0] + abs(location) + 200, -110}, enemy_type, 0, 0);
+            spawn_timer = current_time;
+        }
+
     //--------------------------------------------------
     // Renderer Stuff that Gamplay Code Relies on
     //--------------------------------------------------
@@ -1087,6 +1017,26 @@ static void game_update_and_render(pal_window* window) {
 
         }
     }
+
+    //--------------------------------------------------
+    // Making Bullets Move every frame
+    //--------------------------------------------------
+    for (int i = 0; i < entities.entity_count; i++) {
+    
+        switch (entities.entity_type[i]) {
+                case ENTITY_TYPE_KNIFE_BULLET:
+                case ENTITY_TYPE_PISTOL_BULLET:
+                case ENTITY_TYPE_RIFLE_BULLET:
+                case ENTITY_TYPE_CHAINGUN_BULLET:
+                case ENTITY_TYPE_ROCKET_BULLET:
+                    glm_vec2_add(entities.positions[i], (vec2){entities.velocities[i][0] * delta_time, entities.velocities[i][1] * delta_time}, entities.positions[i]);
+                    break;
+		}
+    }
+
+    //--------------------------------------------------
+    // Bullet Collisions
+    //--------------------------------------------------
     vec2 collision_size = {player_size[0] / 1, player_size[1] / 1};
     pal_bool collided = 0;
     for (int i = 0; i < entities.entity_count; i++) {
@@ -1102,38 +1052,19 @@ static void game_update_and_render(pal_window* window) {
                     for (int j = 0; j < entities.entity_count; j++) {
                         switch (entities.entity_type[j]) {
                             case ENTITY_TYPE_KNIFE_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
-								if (collided) {
-									entities.health[j] -= 1;
-									destroy_entity(i);
-								}
-
-                                break;
                             case ENTITY_TYPE_PISTOL_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
-								if (collided) {
-									entities.health[j] -= 1;
-									destroy_entity(i);
-								}
-                                break;
                             case ENTITY_TYPE_RIFLE_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
-								if (collided) {
-									entities.health[j] -= 1;
-									destroy_entity(i);
-								}
-                                break;
                             case ENTITY_TYPE_ROCKET_GUY:
                                 collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
 								if (collided) {
-									entities.health[j] -= 1;
+									entities.health[j] -= 100;
 									destroy_entity(i);
 								}
                                 break;
                             case ENTITY_TYPE_CHAINGUN_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
+                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], chaingun_guy_size);
 								if (collided) {
-									entities.health[j] -= 1;
+									entities.health[j] -= 100;
 									destroy_entity(i);
 								}
                                 break;
@@ -1152,38 +1083,19 @@ static void game_update_and_render(pal_window* window) {
                     for (int j = 0; j < entities.entity_count; j++) {
                         switch (entities.entity_type[j]) {
                             case ENTITY_TYPE_KNIFE_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
-								if (collided) {
-									entities.health[j] -= 1;
-									destroy_entity(i);
-								}
-
-                                break;
                             case ENTITY_TYPE_PISTOL_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
-								if (collided) {
-									entities.health[j] -= 1;
-									destroy_entity(i);
-								}
-                                break;
                             case ENTITY_TYPE_RIFLE_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
-								if (collided) {
-									entities.health[j] -= 1;
-									destroy_entity(i);
-								}
-                                break;
                             case ENTITY_TYPE_ROCKET_GUY:
                                 collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
 								if (collided) {
-									entities.health[j] -= 1;
+									entities.health[j] -= 15;
 									destroy_entity(i);
 								}
                                 break;
                             case ENTITY_TYPE_CHAINGUN_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
+                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], chaingun_guy_size);
 								if (collided) {
-									entities.health[j] -= 1;
+									entities.health[j] -= 15;
 									destroy_entity(i);
 								}
                                 break;
@@ -1203,38 +1115,19 @@ static void game_update_and_render(pal_window* window) {
                     for (int j = 0; j < entities.entity_count; j++) {
                         switch (entities.entity_type[j]) {
                             case ENTITY_TYPE_KNIFE_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
-								if (collided) {
-									entities.health[j] -= 1;
-									destroy_entity(i);
-								}
-
-                                break;
                             case ENTITY_TYPE_PISTOL_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
-								if (collided) {
-									entities.health[j] -= 1;
-									destroy_entity(i);
-								}
-                                break;
                             case ENTITY_TYPE_RIFLE_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
-								if (collided) {
-									entities.health[j] -= 1;
-									destroy_entity(i);
-								}
-                                break;
                             case ENTITY_TYPE_ROCKET_GUY:
                                 collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
 								if (collided) {
-									entities.health[j] -= 1;
+									entities.health[j] -= 25;
 									destroy_entity(i);
 								}
                                 break;
                             case ENTITY_TYPE_CHAINGUN_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
+                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], chaingun_guy_size);
 								if (collided) {
-									entities.health[j] -= 1;
+									entities.health[j] -= 25;
 									destroy_entity(i);
 								}
                                 break;
@@ -1255,39 +1148,22 @@ static void game_update_and_render(pal_window* window) {
                     for (int j = 0; j < entities.entity_count; j++) {
                         switch (entities.entity_type[j]) {
                             case ENTITY_TYPE_KNIFE_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
-								if (collided) {
-									entities.health[j] -= 1;
-									destroy_entity(i);
-								}
-
-                                break;
                             case ENTITY_TYPE_PISTOL_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
-								if (collided) {
-									entities.health[j] -= 1;
-									destroy_entity(i);
-								}
-                                break;
                             case ENTITY_TYPE_RIFLE_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
-								if (collided) {
-									entities.health[j] -= 1;
-									destroy_entity(i);
-								}
-                                break;
                             case ENTITY_TYPE_ROCKET_GUY:
                                 collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
 								if (collided) {
-									entities.health[j] -= 1;
+									entities.health[j] -= 200;
 									destroy_entity(i);
+                                    pal_play_sound(explosion_sound, 1);
 								}
                                 break;
                             case ENTITY_TYPE_CHAINGUN_GUY:
-                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
+                                collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], chaingun_guy_size);
 								if (collided) {
-									entities.health[j] -= 1;
+									entities.health[j] -= 200;
 									destroy_entity(i);
+                                    pal_play_sound(explosion_sound, 1);
 								}
                                 break;
                         }
@@ -1308,7 +1184,7 @@ static void game_update_and_render(pal_window* window) {
                             case ENTITY_TYPE_KNIFE_GUY:
 								collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
 								if (collided) {
-									entities.health[j] -= 1;
+									entities.health[j] -= 25;
 									destroy_entity(i);
 								}
 
@@ -1316,28 +1192,28 @@ static void game_update_and_render(pal_window* window) {
                             case ENTITY_TYPE_PISTOL_GUY:
 								collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
 								if (collided) {
-									entities.health[j] -= 1;
+									entities.health[j] -= 25;
 									destroy_entity(i);
 								}
                                 break;
                             case ENTITY_TYPE_RIFLE_GUY:
 								collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
 								if (collided) {
-									entities.health[j] -= 1;
+									entities.health[j] -= 25;
 									destroy_entity(i);
 								}
                                 break;
                             case ENTITY_TYPE_ROCKET_GUY:
 								collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
 								if (collided) {
-									entities.health[j] -= 1;
+									entities.health[j] -= 25;
 									destroy_entity(i);
 								}
                                 break;
                             case ENTITY_TYPE_CHAINGUN_GUY:
 								collided = check_aabb_collision(entities.positions[j], collision_size, entities.positions[i], guy_size);
 								if (collided) {
-									entities.health[j] -= 1;
+									entities.health[j] -= 25;
 									destroy_entity(i);
 								}
                                 break;
@@ -1348,20 +1224,20 @@ static void game_update_and_render(pal_window* window) {
                 break;
         }
     }
-    //--------------------------------------------------
-    // Bullets
-    //--------------------------------------------------
+
     for (int i = 0; i < entities.entity_count; i++) {
-    
         switch (entities.entity_type[i]) {
-                case ENTITY_TYPE_KNIFE_BULLET:
-                case ENTITY_TYPE_PISTOL_BULLET:
-                case ENTITY_TYPE_RIFLE_BULLET:
-                case ENTITY_TYPE_CHAINGUN_BULLET:
-                case ENTITY_TYPE_ROCKET_BULLET:
-                    glm_vec2_add(entities.positions[i], (vec2){entities.velocities[i][0] * delta_time, entities.velocities[i][1] * delta_time}, entities.positions[i]);
-                    break;
-		}
+			case ENTITY_TYPE_KNIFE_GUY:
+			case ENTITY_TYPE_PISTOL_GUY:
+			case ENTITY_TYPE_RIFLE_GUY:
+			case ENTITY_TYPE_ROCKET_GUY:
+			case ENTITY_TYPE_CHAINGUN_GUY:
+                if (entities.health[i] <= 0) {
+                    destroy_entity(i);
+                    score += 1 + entities.entity_type[i];
+                }
+				break;
+        }
     }
     //--------------------------------------------------
     // Rendering
@@ -1461,10 +1337,10 @@ static void game_update_and_render(pal_window* window) {
 				glm_vec2_add(entities.positions[i], (vec2){-5, 2}, gun_pos);
 
 				if (entities.facing_left[i]) {
-				draw_sprite(rifle_guy_left_texture, entities.positions[i], guy_size, no_rotation);
+				draw_sprite(knife_guy_left_texture, entities.positions[i], guy_size, no_rotation);
 				draw_sprite(knife_left_texture, gun_pos, knife_size, entities.rotations[i]);
 				} else {
-				draw_sprite(rifle_guy_right_texture, entities.positions[i], guy_size, no_rotation);
+				draw_sprite(knife_guy_right_texture, entities.positions[i], guy_size, no_rotation);
 				draw_sprite(knife_right_texture, gun_pos, knife_size, entities.rotations[i]);
 				
 				}
@@ -1555,6 +1431,11 @@ static void game_update_and_render(pal_window* window) {
     
     draw_text("GET BACK TO THE FRONT LINES", -300, 0, 16, 6, (vec3){1, 1, 1});
     }
+    const char score_string[24] = "SCORE:";
+    const char score_number_string[8];
+    myitoa(score, score_number_string);
+    strcat(score_string, score_number_string);
+    draw_text(score_string, -300, -155, 15, 6, (vec3){1, 1, 1});
     // Swap buffers
     pal_swap_buffers(window);
 }
@@ -1572,11 +1453,9 @@ int main() {
         fprintf(stderr, "ERROR: Failed to initialize glad!\n");
     }
 
-    pal_sound* music = pal_load_music("sine_wave.wav");
 
-    pal_play_music(music, 0.1f);
-    pal_set_window_icon_legacy(window, "icon.ico");
-    pal_set_taskbar_icon(window, "png.png");
+    pal_set_window_icon_legacy(window, "textures/icon.png");
+    pal_set_taskbar_icon(window, "textures/icon.png");
     pal_set_cursor(window, "textures/crosshair_32_by_32.png", 32, 16, 16);
     pal_gamepad_state state;
     uint8_t running = pal_true;

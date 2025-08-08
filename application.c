@@ -37,7 +37,6 @@ const u64 U64_MAX = UINT64_MAX;	/**< Maximum value for an unsigned 64 bit intege
 typedef float f32;
 typedef double f64;
 
-#define PI 3.1415
 
 void check_compile_errors(u32 object, const char* type) {
     i32 success;
@@ -235,14 +234,15 @@ static u32 quadIndices[] = {
 };
 
 // globals
-mat4 pv = {0};
+static mat4 pv = {0};
 static GLuint VAO = 0, VBO = 0, EBO = 0;
 static GLuint sprite_shader = 0;
-static GLuint player_texture;
-static GLuint rocket_guy_left_texture, chaingun_guy_left_texture, knife_guy_left_texture, rifle_guy_left_texture;
-static GLuint rocket_guy_right_texture, chaingun_guy_right_texture, knife_guy_right_texture, rifle_guy_right_texture;
-static GLuint cross_pack_texture;
+static GLuint player_texture, chopper_texture;
+static GLuint rocket_guy_left_texture, chaingun_guy_left_texture, knife_guy_left_texture, rifle_guy_left_texture, pistol_guy_left_texture;
+static GLuint rocket_guy_right_texture, chaingun_guy_right_texture, knife_guy_right_texture, rifle_guy_right_texture, pistol_guy_right_texture;
+static GLuint health_pack_texture;
 static GLuint ground_texture, scrolling_clouds_texture, scrolling_trees_texture, scrolling_mountains_texture, sun_texture, sky_texture;
+static GLuint rifle_bullet_texture, pistol_bullet_texture, knife_bullet_texture, chaingun_bullet_texture, rocket_bullet_texture;
 static GLuint rifle_right_texture, pistol_right_texture, rocket_launcher_right_texture, chaingun_right_texture, knife_right_texture;
 static GLuint rifle_left_texture, pistol_left_texture, rocket_launcher_left_texture, chaingun_left_texture, knife_left_texture;
 enum {
@@ -322,27 +322,36 @@ static f32 last_frame_time = 0;
 static f32 delta_time = 0;
 
 // Gun sizes.
-const vec2 rifle_size = {9.0f, 3.0f};
-const vec2 rocket_launcher_size = {9.0f, 3.0f};
-const vec2 pistol_size = {9.0f, 3.0f};
-const vec2 chaingun_size = {18.0f, 9.0f};
-const vec2 knife_size = {9.0f, 3.0f};
+static const vec2 rifle_size = {9.0f, 3.0f};
+static const vec2 rocket_launcher_size = {12.0f, 3.0f};
+static const vec2 pistol_size = {9.0f, 3.0f};
+static const vec2 chaingun_size = {18.0f, 9.0f};
+static const vec2 knife_size = {9.0f, 3.0f};
+
+// Bullet sizes.
+static const vec2 knife_bullet_size = {9.0f, 9.0f};
+static const vec2 rifle_bullet_size = {6.0f, 2.0f};
+static const vec2 chaingun_bullet_size = {9.0f, 3.0f};
+static const vec2 rocket_bullet_size = {24.0f, 24.0f};
+static const vec2 pistol_bullet_size = {3.0f, 3.0f};
 
 // entity sizes.
-const vec2 guy_size = {12.0f, 12.0f};
-vec2 chaingun_guy_size = {14.0f, 14.0f};
-const vec2 chopper_size = {54.0f, 54.0f};
+static const vec2 player_size = {16.0f, 32.0f};
+static const vec2 guy_size = {12.0f, 12.0f};
+static vec2 chaingun_guy_size = {14.0f, 14.0f};
+static const vec2 chopper_size = {59.0f, 35.0f};
 
 static int player_health = {100};
+static int currently_held_weapon = 0;
 
-vec2 rifle_guy_pos = {0, -110};
-vec2 chaingun_guy_pos = {150, -109};
-vec2 rocket_guy_pos = {100, -110};
-vec2 knife_guy_pos = {200, -110};
+static vec2 rifle_guy_pos = {0, -110};
+static vec2 chaingun_guy_pos = {150, -109};
+static vec2 rocket_guy_pos = {100, -110};
+static vec2 knife_guy_pos = {200, -110};
 
-const f32 no_rotation = 0.0f;
+static const f32 no_rotation = 0.0f;
 
-vec4 mouse_pos_world = {0,0,0,0};
+static vec4 mouse_pos_world = {0,0,0,0};
 #define SCREEN_WIDTH 1920
 #define SCREEN_HEIGHT 1080
 
@@ -350,7 +359,7 @@ vec4 mouse_pos_world = {0,0,0,0};
 // sizes for all entities are stored
 // out of band.
 
-typedef enum _entitytype {
+enum _entitytype {
 
     // player
     ENTITY_TYPE_PLAYER,
@@ -370,7 +379,7 @@ typedef enum _entitytype {
     ENTITY_TYPE_ROCKET_BULLET,
 
     // pickups
-    ENTITY_TYPE_CROSS_PACK,
+    ENTITY_TYPE_HEALTH_PACK,
     ENTITY_TYPE_COUNT,
 };
 
@@ -676,25 +685,64 @@ static void create_entity(vec2 position, u32 entity_type, pal_bool facing_left, 
     entities.bullet_owned_by[entity] = bullet_owner;
 }
 
+static void destroy_entity(int entity_idx) {
+    i32 last_entity = entities.entity_count;
+    entities.id[entity_idx] = entities.id[last_entity];
+    entities.entity_type[entity_idx] = entities.entity_type[last_entity];
+    entities.health[entity_idx] = entities.health[last_entity];
+    entities.positions[entity_idx][0] = entities.positions[last_entity][0];
+    entities.positions[entity_idx][1] = entities.positions[last_entity][1];
+    entities.rotations[entity_idx] = entities.rotations[last_entity];
+    entities.bullet_owned_by[entity_idx] = entities.bullet_owned_by[last_entity];
+    entities.facing_left[entity_idx] = entities.facing_left[last_entity];
+    entities.entity_count--;
+}
+
+static void destroy_all_entities() {
+    i32 entity_count = entities.entity_count;
+    entities.entity_count = 0;
+    entities.next_entity_id = 0;
+    memset(entities.id,0,sizeof(u64) * entity_count);
+    memset(entities.entity_type,0,sizeof(u32) * entity_count);
+    memset(entities.health,0,sizeof(i32) * entity_count);
+    memset(entities.positions,0,sizeof(vec2) * entity_count);
+    memset(entities.rotations,0,sizeof(f32) * entity_count);
+    memset(entities.bullet_owned_by,0,sizeof(i32) * entity_count);
+    memset(entities.facing_left,0,sizeof(i32) * entity_count);
+}
+
 static void game_update_and_render(pal_window* window) {
     // Initialize OpenGL objects on first run
     if (first_run) {
         // sprite shader
         sprite_shader = load_shader("shaders/sprite.vert", "shaders/sprite.frag");
         // Player
-        player_texture = load_texture("textures/upside_down_heli_man.png");
+        player_texture = load_texture("textures/player.png");
+        // Chopper
+        chopper_texture = load_texture("textures/chopper.png");
+        // health pack
+        health_pack_texture = load_texture("textures/health_pack.png");
+
         // Enemies facing left
         rocket_guy_left_texture = load_texture("textures/rocket_guy_left.png");
         chaingun_guy_left_texture = load_texture("textures/chaingun_guy_left.png");
         rifle_guy_left_texture = load_texture("textures/rifle_guy_left.png");
         knife_guy_left_texture = load_texture("textures/knife_guy_left.png");
-        cross_pack_texture = load_texture("textures/cross_pack.png");
+        pistol_guy_left_texture = load_texture("textures/pistol_guy_left.png");
 
         // Enemies facing right
         rocket_guy_right_texture = load_texture("textures/rocket_guy_right.png");
         chaingun_guy_right_texture = load_texture("textures/chaingun_guy_right.png");
         rifle_guy_right_texture = load_texture("textures/rifle_guy_right.png");
         knife_guy_right_texture = load_texture("textures/knife_guy_right.png");
+        pistol_guy_right_texture = load_texture("textures/pistol_guy_right.png");
+        // Bullets
+        rifle_bullet_texture = load_texture("textures/rifle_bullet.png"); // used also for chaingun
+        chaingun_bullet_texture = rifle_bullet_texture;                       // used also for chaingun
+        pistol_bullet_texture = load_texture("textures/pistol_bullet.png");
+        rocket_bullet_texture = load_texture("textures/rocket_bullet.png");
+        knife_bullet_texture = load_texture("textures/knife_bullet.png");
+
         // Weapons facing right
         rifle_right_texture = load_texture("textures/rifle_right.png");
 		pistol_right_texture = load_texture("textures/pistol_right.png");
@@ -762,6 +810,7 @@ static void game_update_and_render(pal_window* window) {
 		create_entity((vec2){100,0}, ENTITY_TYPE_PISTOL_GUY, 0, 0);
 		create_entity((vec2){150,0}, ENTITY_TYPE_KNIFE_GUY, 0, 0);
 		create_entity((vec2){200,0}, ENTITY_TYPE_RIFLE_GUY, 0, 0);
+		create_entity((vec2){250,0}, ENTITY_TYPE_ROCKET_GUY, 0, 0);
     }
     //--------------------------------------------------
     // Renderer Stuff that Gamplay Code Relies on
@@ -799,24 +848,76 @@ static void game_update_and_render(pal_window* window) {
         move_delta[0] *= half_of_sqrt_of_two;
         move_delta[1] *= half_of_sqrt_of_two;
     }
-    if ((entities.positions[0][0] + move_delta[0]) <= -750) {
+	entities.positions[0][0] += move_delta[0] * delta_time;
+	entities.positions[0][1] += move_delta[1] * delta_time;
+
+    // This ensures that the player cannot go too far back.
+    if (entities.positions[0][0] <= -750) {
         get_back = 1;
-    } else {
-		entities.positions[0][0] += move_delta[0] * delta_time;
-		entities.positions[0][1] += move_delta[1] * delta_time;
     }
-    //--------------------------------------------------
-    // Player weapons & shooting
-    //--------------------------------------------------
+
+    // This ensures that the player cannot go too high off the screen.
+    if (entities.positions[0][1] >= 160) {
+        entities.positions[0][1] = 160.0f;
+    }
+
+    // This ensures that the player cannot go through the ground.
+    if (entities.positions[0][1] <= -90.0f) {
+        entities.positions[0][1] = -90.0f;
+    }
+   //--------------------------------------------------
+   // Player weapons & shooting
+   //--------------------------------------------------
 
     get_mouse_pos_world();
     adjust_gun_rotations(&entities);
     enum {
-        WEAPON_KNIFE,
         WEAPON_RIFLE,
+        WEAPON_KNIFE,
+        WEAPON_PISTOL,
+        WEAPON_CHAINGUN,
+        WEAPON_ROCKET_LAUNCHER,
+        WEAPON_COUNT
     };
+
+    if (is_key_pressed(PAL_1)) {
+        currently_held_weapon = WEAPON_KNIFE;
+    }
+    if (is_key_pressed(PAL_2)) {
+        currently_held_weapon = WEAPON_PISTOL;
+    }
+    if (is_key_pressed(PAL_3)) {
+        currently_held_weapon = WEAPON_RIFLE;
+    }
+    if (is_key_pressed(PAL_4)) {
+        currently_held_weapon = WEAPON_CHAINGUN;
+    }
+    if (is_key_pressed(PAL_5)) {
+        currently_held_weapon = WEAPON_ROCKET_LAUNCHER;
+    }
+
     if (is_mouse_pressed(PAL_MOUSE_LEFT)) {
 
+        assert(currently_held_weapon >= 0 && currently_held_weapon < WEAPON_COUNT);
+
+        switch (currently_held_weapon) {
+
+            case WEAPON_KNIFE:
+				create_entity(entities.positions[0], ENTITY_TYPE_KNIFE_BULLET, 0, 0);
+                break;
+            case WEAPON_PISTOL:
+				create_entity(entities.positions[0], ENTITY_TYPE_PISTOL_BULLET, 0, 0);
+                break;
+            case WEAPON_RIFLE:
+				create_entity(entities.positions[0], ENTITY_TYPE_RIFLE_BULLET, 0, 0);
+                break;
+            case WEAPON_CHAINGUN:
+				create_entity(entities.positions[0], ENTITY_TYPE_CHAINGUN_BULLET, 0, 0);
+                break;
+            case WEAPON_ROCKET_LAUNCHER:
+				create_entity(entities.positions[0], ENTITY_TYPE_ROCKET_BULLET, 0, 0);
+                break;
+        }
         player_health -= 10; 
     }
 
@@ -889,80 +990,116 @@ static void game_update_and_render(pal_window* window) {
         switch (entities.entity_type[i]) {
 
             case ENTITY_TYPE_PLAYER:
-            glm_vec2_add(entities.positions[i], (vec2){15, -36}, gun_pos);
+                vec2 chopper_pos = {entities.positions[i][0] - 19, entities.positions[i][1] + 62.5 };
+				draw_sprite(player_texture, entities.positions[i], player_size, no_rotation);
+				draw_sprite(chopper_texture, chopper_pos, chopper_size, no_rotation);
+				if (currently_held_weapon == WEAPON_KNIFE) {
+					glm_vec2_add(entities.positions[i], (vec2){-2, -10}, gun_pos);
+					draw_sprite(knife_left_texture, gun_pos, knife_size, entities.rotations[i]);
+				} else if (currently_held_weapon == WEAPON_PISTOL) {
+					glm_vec2_add(entities.positions[i], (vec2){-2, -10}, gun_pos);
+					draw_sprite(pistol_left_texture, gun_pos, pistol_size, entities.rotations[i]);
+				
+				} else if (currently_held_weapon == WEAPON_RIFLE) {
+					glm_vec2_add(entities.positions[i], (vec2){-2, -10}, gun_pos);
+					draw_sprite(rifle_left_texture, gun_pos, rifle_size, entities.rotations[i]);
 
-            draw_sprite(player_texture, entities.positions[i], chopper_size, no_rotation);
-            draw_sprite(rifle_left_texture, gun_pos, rifle_size, entities.rotations[i]);
+				} else if (currently_held_weapon == WEAPON_CHAINGUN) {
+					glm_vec2_add(entities.positions[i], (vec2){-2, -10}, gun_pos);
+					draw_sprite(chaingun_left_texture, gun_pos, chaingun_size, entities.rotations[i]);
+				
+				} else if (currently_held_weapon == WEAPON_ROCKET_LAUNCHER) {
+					glm_vec2_add(entities.positions[i], (vec2){-2, -10}, gun_pos);
+					draw_sprite(rocket_launcher_left_texture, gun_pos, rocket_launcher_size, entities.rotations[i]);
+
+				}
             break;
 
             case ENTITY_TYPE_KNIFE_GUY:
-            glm_vec2_add(entities.positions[i], (vec2){15, -36}, gun_pos);
+				glm_vec2_add(entities.positions[i], (vec2){-5, 2}, gun_pos);
 
-			if (entities.facing_left[i]) {
-            draw_sprite(rifle_guy_left_texture, entities.positions[i], guy_size, no_rotation);
-            draw_sprite(knife_left_texture, gun_pos, knife_size, entities.rotations[i]);
-            } else {
-            draw_sprite(rifle_guy_right_texture, entities.positions[i], guy_size, no_rotation);
-            draw_sprite(knife_right_texture, gun_pos, knife_size, entities.rotations[i]);
-            
-            }
+				if (entities.facing_left[i]) {
+				draw_sprite(rifle_guy_left_texture, entities.positions[i], guy_size, no_rotation);
+				draw_sprite(knife_left_texture, gun_pos, knife_size, entities.rotations[i]);
+				} else {
+				draw_sprite(rifle_guy_right_texture, entities.positions[i], guy_size, no_rotation);
+				draw_sprite(knife_right_texture, gun_pos, knife_size, entities.rotations[i]);
+				
+				}
                 break;
 
             case ENTITY_TYPE_PISTOL_GUY:
-            glm_vec2_add(entities.positions[i], (vec2){15, -36}, gun_pos);
+				glm_vec2_add(entities.positions[i], (vec2){-8, -1}, gun_pos);
 
-			if (entities.facing_left[i]) {
-				draw_sprite(rifle_guy_left_texture, entities.positions[i], guy_size, no_rotation);
-				draw_sprite(pistol_left_texture, gun_pos, pistol_size, entities.rotations[i]);
-            } else {
-				draw_sprite(rifle_guy_right_texture, entities.positions[i], guy_size, no_rotation);
-				draw_sprite(pistol_right_texture, gun_pos, pistol_size, entities.rotations[i]);
-            
-            }
+				if (entities.facing_left[i]) {
+					draw_sprite(pistol_guy_left_texture, entities.positions[i], guy_size, no_rotation);
+					draw_sprite(pistol_left_texture, gun_pos, pistol_size, entities.rotations[i]);
+				} else {
+					draw_sprite(pistol_guy_right_texture, entities.positions[i], guy_size, no_rotation);
+					draw_sprite(pistol_right_texture, gun_pos, pistol_size, entities.rotations[i]);
+				
+				}
                 break;
+
             case ENTITY_TYPE_RIFLE_GUY:
-            glm_vec2_add(entities.positions[i], (vec2){15, -36}, gun_pos);
-			if (entities.facing_left[i]) {
-				draw_sprite(rifle_guy_left_texture, entities.positions[i], guy_size, no_rotation);
-				draw_sprite(rifle_left_texture, gun_pos, rifle_size, entities.rotations[i]);
-            } else {
-				draw_sprite(rifle_guy_right_texture, entities.positions[i], guy_size, no_rotation);
-				draw_sprite(rifle_right_texture, gun_pos, rifle_size, entities.rotations[i]);
-            
-			}
+				glm_vec2_add(entities.positions[i], (vec2){-5, 1}, gun_pos);
+				if (entities.facing_left[i]) {
+					draw_sprite(rifle_guy_left_texture, entities.positions[i], guy_size, no_rotation);
+					draw_sprite(rifle_left_texture, gun_pos, rifle_size, entities.rotations[i]);
+				} else {
+					draw_sprite(rifle_guy_right_texture, entities.positions[i], guy_size, no_rotation);
+					draw_sprite(rifle_right_texture, gun_pos, rifle_size, entities.rotations[i]);
+				
+				}
                 break;
-            case ENTITY_TYPE_ROCKET_GUY:
-            glm_vec2_add(entities.positions[i], (vec2){15, -36}, gun_pos);
 
-            if (entities.facing_left[i]) {
-            draw_sprite(rocket_guy_left_texture, entities.positions[i], guy_size, no_rotation);
-            draw_sprite(rocket_launcher_left_texture, gun_pos, rocket_launcher_size, entities.rotations[i]);
-            } else {
-            draw_sprite(rocket_guy_right_texture, entities.positions[i], guy_size, no_rotation);
-            draw_sprite(rocket_launcher_right_texture, gun_pos, rocket_launcher_size, entities.rotations[i]);
-            
-            }
+            case ENTITY_TYPE_ROCKET_GUY:
+				glm_vec2_add(entities.positions[i], (vec2){-3, 1}, gun_pos);
+
+				if (entities.facing_left[i]) {
+				draw_sprite(rocket_guy_left_texture, entities.positions[i], guy_size, no_rotation);
+				draw_sprite(rocket_launcher_left_texture, gun_pos, rocket_launcher_size, entities.rotations[i]);
+				} else {
+				draw_sprite(rocket_guy_right_texture, entities.positions[i], guy_size, no_rotation);
+				draw_sprite(rocket_launcher_right_texture, gun_pos, rocket_launcher_size, entities.rotations[i]);
+				
+				}
                 break;
 
             case ENTITY_TYPE_CHAINGUN_GUY:
-            glm_vec2_add(entities.positions[i], (vec2){5, -3}, gun_pos);
+				glm_vec2_add(entities.positions[i], (vec2){0, -3}, gun_pos);
 
-            if (entities.facing_left[i]) {
-				draw_sprite(chaingun_guy_left_texture, entities.positions[i], chaingun_guy_size, no_rotation);
-				draw_sprite(chaingun_left_texture, gun_pos, chaingun_size, entities.rotations[i]);
-            } else {
-				draw_sprite(chaingun_guy_right_texture, entities.positions[i], chaingun_guy_size, no_rotation);
-				draw_sprite(chaingun_right_texture, gun_pos, chaingun_size, entities.rotations[i]);
+				if (entities.facing_left[i]) {
+					draw_sprite(chaingun_guy_left_texture, entities.positions[i], chaingun_guy_size, no_rotation);
+					draw_sprite(chaingun_left_texture, gun_pos, chaingun_size, entities.rotations[i]);
+				} else {
+					draw_sprite(chaingun_guy_right_texture, entities.positions[i], chaingun_guy_size, no_rotation);
+					draw_sprite(chaingun_right_texture, gun_pos, chaingun_size, entities.rotations[i]);
 
-            }
+				}
+                break;
+
+            case ENTITY_TYPE_KNIFE_BULLET:
+                draw_sprite(knife_bullet_texture, entities.positions[i], knife_bullet_size, entities.rotations[i]);
+                break;
+            case ENTITY_TYPE_PISTOL_BULLET:
+					draw_sprite(pistol_bullet_texture, entities.positions[i], pistol_bullet_size, entities.rotations[i]);
+                break;
+            case ENTITY_TYPE_RIFLE_BULLET:
+					draw_sprite(rifle_bullet_texture, entities.positions[i], rifle_bullet_size, entities.rotations[i]);
+                break;
+            case ENTITY_TYPE_CHAINGUN_BULLET:
+					draw_sprite(chaingun_bullet_texture, entities.positions[i], chaingun_bullet_size, entities.rotations[i]);
+                break;
+            case ENTITY_TYPE_ROCKET_BULLET:
+					draw_sprite(rocket_bullet_texture, entities.positions[i], rocket_bullet_size, entities.rotations[i]);
+                break;
+            case ENTITY_TYPE_HEALTH_PACK:
+				vec2 health_pack_size = {10,10};
+                draw_sprite(health_pack_texture, entities.positions[i], health_pack_size, no_rotation);
                 break;
         }
     }
-
-    // draw pickups
-    vec2 cross_pack_size = {10,10};
-    vec2 cross_pack_pos = {150, -100};
-    draw_sprite(cross_pack_texture, cross_pack_pos, cross_pack_size, no_rotation);
 
     // text
     rgb_color player_health_color = lerp_red_green_100(player_health);
@@ -1010,24 +1147,12 @@ int main() {
             switch (event.type) {
 
                 case PAL_EVENT_MOUSE_BUTTON_DOWN:
-                    if (event.button.button == PAL_MOUSE_LEFT) {
-                        printf("mouse button left!\n");
-                    }
                     break;
                 case PAL_EVENT_MOUSE_BUTTON_UP:
                     break;
                 case PAL_EVENT_KEY_DOWN:
-                    printf("Key down!\n");
-                    #if 0
-                    if (event.key.scancode == PAL_SCAN_ESCAPE) {
-                        printf("Exited!\n");
-                        printf("scancode: %d", event.key.scancode);
-                        running = pal_false;
-                    }
-                    #endif
                     break;
                 case PAL_EVENT_KEY_UP:
-                    printf("Keyboard UP!\n");
                     break;
                 case PAL_EVENT_QUIT:
                     printf("Window closed");
@@ -1042,7 +1167,6 @@ int main() {
                     if (event.motion.x > 0 && event.motion.y > 0) {
 						mouse_position[0] = event.motion.x;
 						mouse_position[1] = event.motion.y;
-                    printf("X: %d, Y: %d\n", event.motion.x, event.motion.y);
                     }
                     break;
                 case PAL_EVENT_WINDOW_LOST_FOCUS:

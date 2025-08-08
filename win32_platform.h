@@ -2817,7 +2817,7 @@ static int platform_play_sound(pal_sound* sound, float volume) {
     }
 
     // Set the volume
-    sound->source_voice->lpVtbl->SetVolume(sound->source_voice, volume, 0);
+   sound->source_voice->lpVtbl->SetVolume(sound->source_voice, volume, 0);
 
     XAUDIO2_BUFFER buffer = {
         .AudioBytes = (UINT32)sound->data_size,

@@ -8,4 +8,3 @@ void main() {
     gl_Position = pv * model * vec4(aPos, 0.0, 1.0);
     TexCoord = aTexCoord;
 };
-

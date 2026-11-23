@@ -11,6 +11,9 @@ You move your mouse to aim, and press left click to shoot.
 glad
 cglm
 pal
+stb_image
+stb_vorbis
+stb_image_resize2
 
 ## License
 MIT
